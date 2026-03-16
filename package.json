@@ -1,0 +1,19 @@
+{
+  "name": "cv_to_notion",
+  "version": "1.0.0",
+  "description": "",
+  "type": "module",
+  "main": "server-js.js",
+  "scripts": {
+    "start": "node server-js.js",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.22.1",
+    "multer": "^2.1.1",
+    "node-fetch": "^3.3.2"
+  }
+}

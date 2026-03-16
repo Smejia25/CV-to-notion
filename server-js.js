@@ -1,0 +1,538 @@
+import express from "express";
+import multer from "multer";
+import fetch from "node-fetch";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const PORT = process.env.PORT || 3000;
+const app = express();
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
+app.use(express.json({ limit: "20mb" }));
+app.use(express.static(join(__dirname, "public")));
+
+// ─── Notion Proxy ────────────────────────────────────────────────
+// All Notion API calls go through here to avoid CORS + keep token server-side
+
+app.all("/api/notion/*", async (req, res) => {
+  const notionKey = req.headers["x-notion-key"];
+  if (!notionKey) return res.status(401).json({ error: "Missing Notion API key" });
+
+  const path = req.params[0]; // everything after /api/notion/
+  const url = `https://api.notion.com/v1/${path}`;
+
+  try {
+    const opts = {
+      method: req.method,
+      headers: {
+        "Authorization": `Bearer ${notionKey}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+    };
+    if (["POST", "PATCH", "PUT"].includes(req.method) && req.body) {
+      opts.body = JSON.stringify(req.body);
+    }
+
+    const response = await fetch(url, opts);
+    const data = await response.json();
+    res.status(response.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── CV Extraction ───────────────────────────────────────────────
+
+const EXTRACTION_PROMPT = `Extract the following fields from this CV/resume. Return ONLY a valid JSON object with these keys (use null for any field not found):
+{
+  "applicant_name": "Full name",
+  "email": "Email address",
+  "phone": "Phone number with or without country code may be after Phone: in the text",
+  "linkedin": "LinkedIn profile URL",
+  "location": "City Province/State (NO commas, e.g. 'Montréal QC', 'Toronto ON', 'Medellín Colombia')",
+  "salary_expectations": "Salary expectation (NO commas, e.g. '55K', '$42K', '25/hour'), or null",
+  "source": "One of: Indeed Applicant, Sourced - Indeed, LinkedIn applicant, Sourced - LinkedIn, Sourced - Google, Sourced - Github, Referral. Default to 'LinkedIn applicant' if not clear. NO commas.",
+  "summary": "Brief 1-2 sentence summary of the candidate"
+}
+No markdown, no backticks, no explanation. Just the JSON object.`;
+
+async function extractWithAnthropic(apiKey, base64, mediaType) {
+  const isPdf = mediaType.includes("pdf");
+  const content = [
+    isPdf
+      ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
+      : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
+    { type: "text", text: EXTRACTION_PROMPT },
+  ];
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": apiKey,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 2048,
+      messages: [{ role: "user", content }],
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const text = data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+  return JSON.parse(text.replace(/```json|```/g, "").trim());
+}
+
+async function extractWithOpenAI(apiKey, base64, mediaType) {
+  const isPdf = mediaType.includes("pdf");
+
+  const contentParts = [];
+  if (isPdf) {
+    contentParts.push({
+      type: "input_file",
+      filename: "cv.pdf",
+      file_data: `data:application/pdf;base64,${base64}`,
+    });
+  } else {
+    contentParts.push({
+      type: "input_image",
+      image_url: `data:${mediaType};base64,${base64}`,
+    });
+  }
+  contentParts.push({ type: "input_text", text: EXTRACTION_PROMPT });
+
+  const res = await fetch("https://api.openai.com/v1/responses", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: "gpt-5.4",
+      input: [{ role: "user", content: contentParts }],
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const text = data.output?.filter(b => b.type === "message")
+    .flatMap(b => b.content).filter(c => c.type === "output_text")
+    .map(c => c.text).join("") || "";
+  return JSON.parse(text.replace(/```json|```/g, "").trim());
+}
+
+async function extractWithGemini(apiKey, base64, mediaType) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{
+        parts: [
+          { inline_data: { mime_type: mediaType, data: base64 } },
+          { text: EXTRACTION_PROMPT },
+        ],
+      }],
+    }),
+  });
+
+  const data = await res.json();
+  if (data.error) throw new Error(data.error.message);
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  return JSON.parse(text.replace(/```json|```/g, "").trim());
+}
+
+app.post("/api/extract-cv", upload.single("cv"), async (req, res) => {
+  try {
+    const { provider, aiKey } = req.body;
+    if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+    if (!aiKey) return res.status(400).json({ error: "Missing AI API key" });
+
+    const base64 = req.file.buffer.toString("base64");
+    const mediaType = req.file.mimetype;
+
+    let fields;
+    switch (provider) {
+      case "anthropic":
+        fields = await extractWithAnthropic(aiKey, base64, mediaType);
+        break;
+      case "openai":
+        fields = await extractWithOpenAI(aiKey, base64, mediaType);
+        break;
+      case "gemini":
+        fields = await extractWithGemini(aiKey, base64, mediaType);
+        break;
+      default:
+        return res.status(400).json({ error: "Invalid provider" });
+    }
+
+    res.json({ fields });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Fetch page text content from Notion ─────────────────────────
+
+async function fetchPageText(notionKey, pageId) {
+  const res = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children?page_size=100`, {
+    headers: {
+      "Authorization": `Bearer ${notionKey}`,
+      "Notion-Version": "2022-06-28",
+    },
+  });
+  const data = await res.json();
+  if (!data.results) return "";
+
+  const lines = [];
+  for (const block of data.results) {
+    const richTexts =
+      block[block.type]?.rich_text ||
+      block[block.type]?.text ||
+      block[block.type]?.caption || [];
+    if (Array.isArray(richTexts)) {
+      const text = richTexts.map(t => t.plain_text || "").join("");
+      if (text) lines.push(text);
+    }
+    // Also grab title for child_page/child_database
+    if (block.type === "child_page") lines.push(block.child_page.title);
+    if (block.type === "child_database") lines.push(block.child_database.title);
+  }
+  return lines.join("\n");
+}
+
+// ─── CV Analysis Prompt ──────────────────────────────────────────
+
+const ANALYSIS_PROMPT = `You are a recruiter assistant. You will be given a candidate's CV and a Job Description (JD).
+
+Produce notes following this EXACT structure. Use - for bullets, never use —. Be concise. Avoid all redundancy.
+
+1. Requirements Met vs Not Met
+- List which JD requirements the candidate meets
+- List which JD requirements the candidate does NOT meet
+
+2. Prescreening Questions Analysis
+- If the CV contains prescreening answers, analyze them (translate French to English if needed)
+
+3. Currently Studying?
+- State if the candidate is currently studying and what
+
+4. Gender and Age
+- Give likely gender and estimated age based on CV clues
+
+5. Employment History
+- List each employer with their website URL, company location, dates worked
+- Note any gaps in employment (including from last role to present)
+
+6. Average Job Tenure
+- Calculate the average time spent at each position
+
+7. Why YES
+- Reasons to move forward with this candidate
+
+8. Why NOT
+- Reasons to be cautious about this candidate
+
+9. STAR Method Questions
+- Based on the "Why NOT" points, provide 5 interview questions using the STAR method
+
+10. Interview Decision
+- Would you interview: YES or NO, with brief justification
+
+11. Sector Summary
+- List the sectors/industries the candidate has worked in
+
+Do not use —. Use - instead. Concise language. No redundancy.`;
+
+async function generateAnalysis(provider, apiKey, cvBase64, cvMediaType, jobDescription) {
+  const prompt = `${ANALYSIS_PROMPT}\n\n--- JOB DESCRIPTION ---\n${jobDescription}\n\n--- CANDIDATE CV ---\n(attached as file)`;
+
+  if (provider === "anthropic") {
+    const isPdf = cvMediaType.includes("pdf");
+    const content = [
+      isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: cvBase64 } }
+        : { type: "image", source: { type: "base64", media_type: cvMediaType, data: cvBase64 } },
+      { type: "text", text: prompt },
+    ];
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": apiKey,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        messages: [{ role: "user", content }],
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.content?.filter(b => b.type === "text").map(b => b.text).join("") || "";
+  }
+
+  if (provider === "openai") {
+    const isPdf = cvMediaType.includes("pdf");
+    const cvParts = [];
+    if (isPdf) {
+      cvParts.push({ type: "input_file", filename: "cv.pdf", file_data: `data:application/pdf;base64,${cvBase64}` });
+    } else {
+      cvParts.push({ type: "input_image", image_url: `data:${cvMediaType};base64,${cvBase64}` });
+    }
+    cvParts.push({ type: "input_text", text: prompt });
+
+    const res = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model: "gpt-5.4",
+        input: [{ role: "user", content: cvParts }],
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.output?.filter(b => b.type === "message")
+      .flatMap(b => b.content).filter(c => c.type === "output_text")
+      .map(c => c.text).join("") || "";
+  }
+
+  if (provider === "gemini") {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        contents: [{
+          parts: [
+            { inline_data: { mime_type: cvMediaType, data: cvBase64 } },
+            { text: prompt },
+          ],
+        }],
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error.message);
+    return data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+  }
+
+  throw new Error("Invalid provider for analysis");
+}
+
+// Convert markdown-ish text to Notion blocks
+function textToNotionBlocks(text) {
+  const blocks = [];
+  const lines = text.split("\n");
+
+  for (const line of lines) {
+    const trimmed = line.trimEnd();
+    if (!trimmed) continue;
+
+    // Heading (## or numbered top-level like "1. ")
+    const headingMatch = trimmed.match(/^#{1,3}\s+(.+)/) || trimmed.match(/^(\d+\.\s+.+)$/);
+    if (headingMatch && !trimmed.startsWith("- ")) {
+      blocks.push({
+        object: "block",
+        type: "heading_3",
+        heading_3: { rich_text: [{ type: "text", text: { content: headingMatch[1] || trimmed } }] },
+      });
+      continue;
+    }
+
+    // Bullet
+    if (trimmed.startsWith("- ")) {
+      blocks.push({
+        object: "block",
+        type: "bulleted_list_item",
+        bulleted_list_item: { rich_text: [{ type: "text", text: { content: trimmed.slice(2) } }] },
+      });
+      continue;
+    }
+
+    // Regular paragraph
+    blocks.push({
+      object: "block",
+      type: "paragraph",
+      paragraph: { rich_text: [{ type: "text", text: { content: trimmed } }] },
+    });
+  }
+
+  return blocks;
+}
+
+// ─── File hosting for CV uploads ─────────────────────────────────
+import { randomUUID } from "crypto";
+import { mkdirSync, writeFileSync } from "fs";
+
+const UPLOADS_DIR = join(__dirname, "uploads");
+mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use("/uploads", express.static(UPLOADS_DIR));
+
+// ─── Create Notion Page ──────────────────────────────────────────
+
+app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
+  const { notionKey, dbId, roleId, roleName, aiProvider, aiKey } = req.body;
+  const fields = JSON.parse(req.body.fields || "{}");
+  if (!notionKey || !dbId || !fields) {
+    return res.status(400).json({ error: "Missing required fields" });
+  }
+
+  const properties = {
+    Name: { title: [{ text: { content: fields.applicant_name || "Unknown" } }] },
+  };
+
+  // Email (email type)
+  if (fields.email) {
+    properties["Email"] = { email: fields.email };
+  }
+
+  // Phone Number (rich_text)
+  if (fields.phone) {
+    properties["Phone Number"] = { rich_text: [{ text: { content: fields.phone } }] };
+  }
+
+  // LinkedIn Profile (url type)
+  if (fields.linkedin) {
+    properties["LinkedIn Profile"] = { url: fields.linkedin };
+  }
+
+  // Location (select type - commas not allowed in Notion selects)
+  if (fields.location) {
+    properties["Location"] = { select: { name: fields.location.replace(/,/g, "") } };
+  }
+
+  // Source (select type)
+  if (fields.source) {
+    properties["Source"] = { select: { name: fields.source.replace(/,/g, "") } };
+  }
+
+  // Applicant Status (status type)
+  properties["Applicant Status"] = { status: { name: fields.applicant_status || "Interested - to schedule" } };
+
+  // Candidate Score (select)
+  properties["Candidate Score"] = { select: { name: "➖ Mixed" } };
+
+  // Rejection email sent (checkbox)
+  properties["Rejection email sent"] = { checkbox: false };
+
+  // Date of contact (date)
+  properties["Date of contact"] = { date: { start: new Date().toISOString().split("T")[0] } };
+
+  // Salary Expct. (select type)
+  if (fields.salary_expectations) {
+    properties["Salary Expct."] = { select: { name: fields.salary_expectations.replace(/,/g, "") } };
+  }
+
+  // Applied for (relation)
+  if (roleId) {
+    properties["Applied for"] = { relation: [{ id: roleId }] };
+  }
+
+  // Save CV file and build renamed filename
+  let cvFileUrl = null;
+  let cvFileName = null;
+  if (req.file) {
+    const name = fields.applicant_name || "Unknown";
+    const parts = name.trim().split(/\s+/);
+    const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
+    const firstName = parts.length > 1 ? parts.slice(0, -1).join(" ") : "";
+    const ext = req.file.originalname.split(".").pop() || "pdf";
+    cvFileName = `${lastName} ${firstName}${roleName ? " - " + roleName : ""}.${ext}`.trim();
+
+    const fileId = randomUUID();
+    const diskName = `${fileId}.${ext}`;
+    writeFileSync(join(UPLOADS_DIR, diskName), req.file.buffer);
+
+    const host = req.headers.host || `localhost:${PORT}`;
+    const protocol = req.headers["x-forwarded-proto"] || "http";
+    cvFileUrl = `${protocol}://${host}/uploads/${diskName}`;
+  }
+
+  // Attach CV to properties if we have a hosted URL
+  if (cvFileUrl) {
+    properties["CV"] = {
+      files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }],
+    };
+  }
+
+  try {
+    const response = await fetch("https://api.notion.com/v1/pages", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${notionKey}`,
+        "Notion-Version": "2022-06-28",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        parent: { database_id: dbId },
+        properties,
+      }),
+    });
+
+    const data = await response.json();
+    if (data.object === "error") {
+      return res.status(400).json({ error: data.message, details: data });
+    }
+
+    // Generate analysis notes if we have a role and CV
+    if (roleId && req.file && aiProvider && aiKey) {
+      try {
+        // Fetch the job description from the role page
+        const jdText = await fetchPageText(notionKey, roleId);
+
+        if (jdText) {
+          const cvBase64 = req.file.buffer.toString("base64");
+          const cvMediaType = req.file.mimetype;
+
+          // Generate analysis
+          const analysis = await generateAnalysis(aiProvider, aiKey, cvBase64, cvMediaType, jdText);
+
+          // Convert to Notion blocks and append to the created page
+          if (analysis) {
+            const blocks = [
+              {
+                object: "block",
+                type: "heading_2",
+                heading_2: { rich_text: [{ type: "text", text: { content: "Recruiter Notes" } }] },
+              },
+              ...textToNotionBlocks(analysis),
+            ];
+
+            // Notion API limits to 100 blocks per request
+            for (let i = 0; i < blocks.length; i += 100) {
+              await fetch(`https://api.notion.com/v1/blocks/${data.id}/children`, {
+                method: "PATCH",
+                headers: {
+                  "Authorization": `Bearer ${notionKey}`,
+                  "Notion-Version": "2022-06-28",
+                  "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ children: blocks.slice(i, i + 100) }),
+              });
+            }
+          }
+        }
+      } catch (analysisErr) {
+        // Don't fail the whole request if analysis fails - page was already created
+        console.error("Analysis generation failed:", analysisErr.message);
+      }
+    }
+
+    res.json({ success: true, page: data });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─── Fallback to index.html for SPA ─────────────────────────────
+app.get("*", (req, res) => {
+  res.sendFile(join(__dirname, "public", "index.html"));
+});
+
+app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));

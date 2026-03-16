@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "skills": {
+    "notion-api": {
+      "source": "intellectronica/agent-skills",
+      "sourceType": "github",
+      "computedHash": "aa73210fcc5a4f075f53983d5d7ddfeb1fe46fa789998bf265b86cad6ec14d2e"
+    }
+  }
+}

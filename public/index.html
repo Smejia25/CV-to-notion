@@ -1,0 +1,1200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Notion Recruiter</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='20' fill='%236366f1'/><text x='50' y='68' text-anchor='middle' font-size='55' font-family='sans-serif' fill='white'>N</text></svg>" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0a0a0f;
+      --surface: #12121a;
+      --surface-2: #1a1a26;
+      --border: #252536;
+      --border-hover: #3a3a52;
+      --text: #e8e8ed;
+      --text-muted: #8888a0;
+      --text-dim: #5c5c72;
+      --accent: #6366f1;
+      --accent-hover: #818cf8;
+      --accent-glow: rgba(99, 102, 241, 0.15);
+      --green: #34d399;
+      --green-bg: rgba(52, 211, 153, 0.08);
+      --green-border: rgba(52, 211, 153, 0.2);
+      --yellow: #fbbf24;
+      --red: #f87171;
+      --radius: 12px;
+      --radius-sm: 8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      line-height: 1.6;
+      min-height: 100vh;
+    }
+
+    /* Subtle grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(99, 102, 241, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(99, 102, 241, 0.03) 1px, transparent 1px);
+      background-size: 60px 60px;
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    #app {
+      position: relative;
+      z-index: 1;
+      padding: 32px 20px;
+      max-width: 640px;
+      margin: 0 auto;
+    }
+
+    /* ─── Cards ─────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 28px;
+      backdrop-filter: blur(20px);
+    }
+
+    .card-glow {
+      box-shadow: 0 0 0 1px var(--border), 0 8px 40px -12px rgba(0,0,0,0.5), 0 0 80px -20px var(--accent-glow);
+    }
+
+    /* ─── Inputs ────────────────────────────── */
+    .input-group { margin-bottom: 16px; }
+    .input-group:last-child { margin-bottom: 0; }
+
+    .input-label {
+      display: block;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+      letter-spacing: 0.02em;
+    }
+
+    .input {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    .input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .input::placeholder { color: var(--text-dim); }
+
+    select.input {
+      appearance: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' fill='%238888a0' viewBox='0 0 16 16'%3E%3Cpath d='M8 11L3 6h10z'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 12px center;
+      padding-right: 36px;
+      cursor: pointer;
+    }
+
+    /* ─── Buttons ───────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border: none;
+      border-radius: var(--radius-sm);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      outline: none;
+    }
+
+    .btn-primary {
+      background: var(--accent);
+      color: white;
+      box-shadow: 0 2px 12px -2px rgba(99, 102, 241, 0.4);
+    }
+    .btn-primary:hover { background: var(--accent-hover); box-shadow: 0 4px 20px -2px rgba(99, 102, 241, 0.5); }
+    .btn-primary:disabled { background: var(--surface-2); color: var(--text-dim); box-shadow: none; cursor: not-allowed; }
+
+    .btn-success {
+      background: var(--green);
+      color: #0a0a0f;
+      box-shadow: 0 2px 12px -2px rgba(52, 211, 153, 0.3);
+    }
+    .btn-success:hover { filter: brightness(1.1); }
+    .btn-success:disabled { background: var(--surface-2); color: var(--text-dim); box-shadow: none; cursor: not-allowed; }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--text-muted);
+      padding: 6px 10px;
+    }
+    .btn-ghost:hover { color: var(--text); background: var(--surface-2); }
+
+    .btn-full { width: 100%; }
+
+    /* ─── Logo ──────────────────────────────── */
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 8px;
+    }
+
+    .logo-icon {
+      width: 40px;
+      height: 40px;
+      background: white;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      font-weight: 800;
+      color: #0a0a0f;
+      flex-shrink: 0;
+    }
+
+    .logo-icon-sm {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    .logo h1 {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+
+    .logo-sm h1 { font-size: 18px; }
+
+    .subtitle {
+      color: var(--text-muted);
+      font-size: 13px;
+      margin-bottom: 24px;
+      line-height: 1.5;
+    }
+
+    /* ─── Divider ───────────────────────────── */
+    .divider {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 20px 0;
+    }
+
+    /* ─── Breadcrumb ────────────────────────── */
+    .breadcrumb {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 20px;
+      font-size: 13px;
+    }
+
+    .breadcrumb .sep {
+      color: var(--text-dim);
+      margin: 0 2px;
+      user-select: none;
+    }
+
+    .bc-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      padding: 4px 8px;
+      border-radius: 6px;
+      transition: all 0.15s;
+      text-decoration: none;
+    }
+    .bc-btn:hover { color: var(--accent-hover); background: var(--accent-glow); }
+    .bc-btn.bc-current {
+      color: var(--text);
+      cursor: default;
+      font-weight: 500;
+    }
+    .bc-btn.bc-current:hover { background: none; color: var(--text); }
+
+    /* ─── Status bar ────────────────────────── */
+    .status {
+      padding: 10px 16px;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: fadeSlideIn 0.3s ease;
+    }
+
+    .status-info {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+    }
+
+    .status-success {
+      background: var(--green-bg);
+      border: 1px solid var(--green-border);
+      color: var(--green);
+    }
+
+    /* ─── Page list ─────────────────────────── */
+    .section-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 8px;
+    }
+
+    .search-box {
+      position: relative;
+      margin-bottom: 10px;
+    }
+
+    .search-box .search-icon {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text-dim);
+      font-size: 13px;
+      pointer-events: none;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 9px 12px 9px 34px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s, box-shadow 0.2s;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .search-box input::placeholder { color: var(--text-dim); }
+
+    .page-btn.search-result {
+      border-left: 2px solid var(--accent);
+    }
+
+    .page-count {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+
+    .page-list { display: flex; flex-direction: column; gap: 4px; margin-bottom: 24px; max-height: 400px; overflow-y: auto; }
+
+    .page-btn {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+      text-align: left;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .page-btn:hover {
+      background: var(--surface-2);
+      border-color: var(--border-hover);
+      transform: translateX(4px);
+    }
+
+    .page-btn .icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 8px;
+      background: var(--surface-2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 14px;
+      flex-shrink: 0;
+    }
+
+    .page-btn .arrow {
+      margin-left: auto;
+      color: var(--text-dim);
+      font-size: 16px;
+      transition: transform 0.15s;
+    }
+    .page-btn:hover .arrow { transform: translateX(2px); color: var(--text-muted); }
+
+    /* ─── Upload area ───────────────────────── */
+    .upload-zone {
+      border: 2px dashed var(--border);
+      border-radius: var(--radius);
+      padding: 32px 24px;
+      text-align: center;
+      transition: all 0.2s;
+      cursor: pointer;
+      position: relative;
+    }
+    .upload-zone:hover, .upload-zone.drag-over {
+      border-color: var(--accent);
+      background: var(--accent-glow);
+    }
+
+    .upload-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+    }
+
+    .upload-icon {
+      font-size: 28px;
+      margin-bottom: 8px;
+      opacity: 0.6;
+    }
+
+    .upload-text { color: var(--text-muted); font-size: 13px; }
+    .upload-text strong { color: var(--accent-hover); }
+
+    .file-selected {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      margin-top: 12px;
+      font-size: 13px;
+    }
+
+    .file-selected .file-icon {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      background: var(--accent-glow);
+      border: 1px solid rgba(99, 102, 241, 0.2);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .file-name { color: var(--text); font-weight: 500; }
+    .file-size { color: var(--text-dim); font-size: 12px; }
+
+    /* ─── Fields grid ───────────────────────── */
+    .fields-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .field-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .field-label {
+      width: 130px;
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      text-align: right;
+    }
+
+    .field-input {
+      flex: 1;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+    .field-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-glow); }
+
+    .auto-fields {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 14px 16px;
+      margin-top: 16px;
+      font-size: 12px;
+      color: var(--text-dim);
+      line-height: 1.7;
+    }
+
+    .auto-fields .label {
+      font-weight: 600;
+      color: var(--text-muted);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 4px;
+    }
+
+    .auto-fields .tag {
+      display: inline-block;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 8px;
+      margin: 2px 4px 2px 0;
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* ─── Success ───────────────────────────── */
+    .success-card {
+      text-align: center;
+      padding: 48px 28px;
+    }
+
+    .success-icon {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: var(--green-bg);
+      border: 2px solid var(--green-border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      margin: 0 auto 16px;
+    }
+
+    .success-card h2 { font-size: 18px; font-weight: 600; margin-bottom: 6px; }
+    .success-card p { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
+
+    /* ─── Provider badges ───────────────────── */
+    .provider-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    .provider-badge .dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+    }
+
+    .provider-badge .dot-anthropic { background: #d97706; }
+    .provider-badge .dot-openai { background: #10b981; }
+    .provider-badge .dot-gemini { background: #3b82f6; }
+
+    /* ─── Animations ────────────────────────── */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .fade-in { animation: fadeSlideIn 0.35s ease; }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+
+    /* ─── Responsive ────────────────────────── */
+    @media (max-width: 480px) {
+      .field-row { flex-direction: column; align-items: stretch; gap: 4px; }
+      .field-label { width: auto; text-align: left; }
+    }
+  </style>
+</head>
+<body>
+<div id="app">
+  <div id="main"></div>
+</div>
+
+<script>
+// ─── Persistence ─────────────────────────────────────────────────
+const STORAGE_KEY = "notion_recruiter_settings";
+
+function loadSettings() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {};
+}
+
+function saveSettings() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify({
+    notionKey: state.notionKey,
+    dbId: state.dbId,
+    aiProvider: state.aiProvider,
+    aiKey: state.aiKey,
+  }));
+}
+
+const saved = loadSettings();
+
+const state = {
+  notionKey: saved.notionKey || "",
+  dbId: saved.dbId || "",
+  aiProvider: saved.aiProvider || "anthropic",
+  aiKey: saved.aiKey || "",
+  connected: false,
+  loading: false,
+  status: "",
+  pages: [],
+  breadcrumb: [],
+  currentPageId: null,
+  currentPageTitle: "",
+  cvFile: null,
+  extractedFields: null,
+  created: false,
+  searchQuery: "",
+  searchResults: null,
+  searching: false,
+  targetDbId: null,        // the database we'll create entries in
+  roles: [],               // "Applied for" relation options
+  selectedRole: null,      // { id, title } of chosen role
+};
+
+let searchTimer = null;
+
+async function searchNotion(query) {
+  if (!query || query.length < 2) {
+    state.searchResults = null;
+    state.searching = false;
+    render();
+    return;
+  }
+  state.searching = true;
+  render();
+  try {
+    const data = await notionFetch("search", "POST", {
+      query,
+      page_size: 20,
+    });
+    if (data.results) {
+      state.searchResults = data.results.map(item => {
+        if (item.object === "database") {
+          const title = item.title?.[0]?.plain_text || "Untitled DB";
+          return { id: item.id, title, type: "child_database" };
+        }
+        const titleProp = Object.values(item.properties || {}).find(v => v.type === "title");
+        const title = titleProp?.title?.[0]?.plain_text || "Untitled";
+        return { id: item.id, title, type: "page" };
+      });
+    } else {
+      state.searchResults = [];
+    }
+  } catch (e) {
+    state.searchResults = [];
+  }
+  state.searching = false;
+  render();
+  const input = document.getElementById("pageSearch");
+  if (input) { input.focus(); input.selectionStart = input.selectionEnd = input.value.length; }
+}
+
+// ─── Notion API via proxy ────────────────────────────────────────
+
+async function notionFetch(path, method = "GET", body = null) {
+  const opts = {
+    method,
+    headers: { "Content-Type": "application/json", "x-notion-key": state.notionKey },
+  };
+  if (body) opts.body = JSON.stringify(body);
+  const res = await fetch(`/api/notion/${path}`, opts);
+  return res.json();
+}
+
+async function fetchBlockChildren(blockId) {
+  const data = await notionFetch(`blocks/${blockId}/children`);
+  if (data.object === "error") return null;
+  return data.results || [];
+}
+
+async function fetchChildren(blockId) {
+  const blocks = await fetchBlockChildren(blockId);
+  if (blocks === null) return null;
+
+  const pages = [];
+  const containers = [];
+
+  for (const b of blocks) {
+    if (b.type === "child_page" || b.type === "child_database") {
+      pages.push({
+        id: b.id,
+        title: b.type === "child_page" ? b.child_page.title : b.child_database.title,
+        type: b.type,
+      });
+    } else if (b.has_children) {
+      containers.push(b.id);
+    }
+  }
+
+  if (pages.length > 0 || containers.length === 0) return pages;
+
+  // Fetch all container children in parallel
+  const nested = await Promise.all(containers.map(id => fetchBlockChildren(id)));
+  const subContainers = [];
+
+  for (const childBlocks of nested) {
+    if (!childBlocks) continue;
+    for (const b of childBlocks) {
+      if (b.type === "child_page" || b.type === "child_database") {
+        pages.push({
+          id: b.id,
+          title: b.type === "child_page" ? b.child_page.title : b.child_database.title,
+          type: b.type,
+        });
+      } else if (b.has_children) {
+        subContainers.push(b.id);
+      }
+    }
+  }
+
+  // One more level (column_list -> column -> child_page)
+  if (pages.length === 0 && subContainers.length > 0) {
+    const deeper = await Promise.all(subContainers.map(id => fetchBlockChildren(id)));
+    for (const childBlocks of deeper) {
+      if (!childBlocks) continue;
+      for (const b of childBlocks) {
+        if (b.type === "child_page" || b.type === "child_database") {
+          pages.push({
+            id: b.id,
+            title: b.type === "child_page" ? b.child_page.title : b.child_database.title,
+            type: b.type,
+          });
+        }
+      }
+    }
+  }
+
+  return pages;
+}
+
+async function fetchDbPages(dbId) {
+  const data = await notionFetch(`databases/${dbId}/query`, "POST", {});
+  if (data.object === "error") throw new Error(data.message);
+  if (data.results) {
+    return data.results.map(p => {
+      const titleProp = Object.values(p.properties).find(v => v.type === "title");
+      const title = titleProp?.title?.[0]?.plain_text || "Untitled";
+      return { id: p.id, title, type: "page" };
+    });
+  }
+  return [];
+}
+
+async function fetchRolesForDb(dbId) {
+  // Get database schema to find "Applied for" relation
+  const dbInfo = await notionFetch(`databases/${dbId}`);
+  if (dbInfo.object === "error") return [];
+
+  const appliedFor = dbInfo.properties?.["Applied for"];
+  if (!appliedFor || appliedFor.type !== "relation") return [];
+
+  const rolesDbId = appliedFor.relation?.database_id;
+  if (!rolesDbId) return [];
+
+  // Fetch all roles from the related database
+  const data = await notionFetch(`databases/${rolesDbId}/query`, "POST", {});
+  if (!data.results) return [];
+
+  return data.results.map(p => {
+    const titleProp = Object.values(p.properties).find(v => v.type === "title");
+    const title = titleProp?.title?.[0]?.plain_text || "Untitled";
+    return { id: p.id, title };
+  });
+}
+
+// ─── Render ──────────────────────────────────────────────────────
+
+function render() {
+  const el = document.getElementById("main");
+  if (!state.connected) {
+    el.innerHTML = renderConnect();
+  } else {
+    el.innerHTML = renderMain();
+  }
+  bindEvents();
+}
+
+function renderConnect() {
+  return `
+    <div style="max-width:440px;margin:60px auto 0" class="fade-in">
+      <div class="card card-glow">
+        <div class="logo">
+          <div class="logo-icon">N</div>
+          <h1>Notion Recruiter</h1>
+        </div>
+        <p class="subtitle">Connect your Notion workspace and AI provider to start extracting CVs.</p>
+
+        <div class="input-group">
+          <label class="input-label">Notion Integration Key</label>
+          <input id="notionKey" type="password" placeholder="ntn_..." value="${state.notionKey}" class="input" />
+        </div>
+        <div class="input-group">
+          <label class="input-label">Database / Page ID</label>
+          <input id="dbId" type="text" placeholder="5312b98e6fb04eca95adaff691b6db55" value="${state.dbId}" class="input" />
+        </div>
+
+        <hr class="divider" />
+
+        <div class="input-group">
+          <label class="input-label">AI Provider</label>
+          <select id="aiProvider" class="input">
+            <option value="anthropic" ${state.aiProvider === "anthropic" ? "selected" : ""}>Anthropic (Claude Sonnet)</option>
+            <option value="openai" ${state.aiProvider === "openai" ? "selected" : ""}>OpenAI (GPT-5.4)</option>
+            <option value="gemini" ${state.aiProvider === "gemini" ? "selected" : ""}>Google (Gemini 2.5 Flash)</option>
+          </select>
+        </div>
+        <div class="input-group">
+          <label class="input-label">AI API Key</label>
+          <input id="aiKey" type="password" placeholder="sk-... or AIza..." value="${state.aiKey}" class="input" />
+        </div>
+
+        <button id="connectBtn" class="btn btn-primary btn-full" style="margin-top:8px" ${state.loading ? "disabled" : ""}>
+          ${state.loading ? '<span class="spinner"></span> Connecting...' : "Connect"}
+        </button>
+        ${state.status ? `<p style="margin-top:12px;font-size:13px;color:var(--yellow)">${state.status}</p>` : ""}
+      </div>
+    </div>`;
+}
+
+function renderMain() {
+  const isLast = (i) => i === state.breadcrumb.length - 1;
+  const breadcrumbHtml = state.breadcrumb.map((b, i) =>
+    `${i > 0 ? '<span class="sep">/</span>' : ""}
+     <button class="bc-btn ${isLast(i) ? 'bc-current' : ''}" data-idx="${i}">${esc(b.title)}</button>`
+  ).join("");
+
+  const statusHtml = state.status ? `
+    <div class="status ${state.created ? "status-success" : "status-info"} fade-in">
+      ${state.loading ? '<span class="spinner"></span>' : ""}
+      <span>${state.status}</span>
+    </div>` : "";
+
+  const providerNames = { anthropic: "Claude", openai: "GPT-5.4", gemini: "Gemini" };
+
+  const isSearching = state.searchQuery.length >= 2;
+  const displayPages = isSearching && state.searchResults ? state.searchResults : state.pages;
+
+  const pagesHtml = (state.pages.length || isSearching) && !state.extractedFields ? `
+    <div class="fade-in" style="margin-bottom:24px">
+      <div class="section-label">Pages</div>
+      <div class="search-box">
+        <span class="search-icon">&#128269;</span>
+        <input id="pageSearch" type="text" placeholder="Search all pages and subpages..." value="${esc(state.searchQuery)}" />
+      </div>
+      <div class="page-count">${isSearching ? `${displayPages.length} result(s) across all pages` : `${state.pages.length} page(s) at this level`}</div>
+      <div class="page-list">
+        ${displayPages.map(p => `
+          <button class="page-btn${isSearching ? " search-result" : ""}"
+            data-id="${p.id}" data-title="${esc(p.title)}" data-type="${p.type}">
+            <div class="icon">${p.type === "child_database" ? "&#128451;" : "&#128196;"}</div>
+            <span>${esc(p.title)}</span>
+            <span class="arrow">&#8250;</span>
+          </button>`).join("")}
+        ${displayPages.length === 0 ? '<div style="padding:16px;text-align:center;color:var(--text-dim);font-size:13px">No pages found</div>' : ""}
+      </div>
+    </div>` : "";
+
+  const rolesHtml = state.roles.length && !state.extractedFields && !state.created ? `
+    <div class="card fade-in" style="margin-bottom:20px">
+      <h2 style="font-size:16px;font-weight:600;margin-bottom:12px">Select Role</h2>
+      <div class="input-group" style="margin-bottom:0">
+        <select id="roleSelect" class="input">
+          <option value="">-- Choose a role --</option>
+          ${state.roles.map(r => `<option value="${r.id}" ${state.selectedRole?.id === r.id ? "selected" : ""}>${esc(r.title)}</option>`).join("")}
+        </select>
+      </div>
+      ${state.selectedRole ? `<div style="margin-top:8px;font-size:12px;color:var(--green)">Selected: ${esc(state.selectedRole.title)}</div>` : ""}
+    </div>` : "";
+
+  const uploadHtml = !state.created ? `
+    <div class="card fade-in" style="margin-bottom:20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+        <h2 style="font-size:16px;font-weight:600">Upload CV</h2>
+        <span class="provider-badge">
+          <span class="dot dot-${state.aiProvider}"></span>
+          ${providerNames[state.aiProvider]}
+        </span>
+      </div>
+      <div class="upload-zone" id="dropZone">
+        <input id="cvFile" type="file" accept=".pdf,image/*" />
+        <div class="upload-icon">&#128206;</div>
+        <div class="upload-text">Drop a file here or <strong>browse</strong></div>
+        <div style="color:var(--text-dim);font-size:12px;margin-top:4px">PDF or image, up to 20MB</div>
+      </div>
+      ${state.cvFile ? `
+        <div class="file-selected fade-in">
+          <div class="file-icon">&#128196;</div>
+          <div>
+            <div class="file-name">${esc(state.cvFile.name)}</div>
+            <div class="file-size">${(state.cvFile.size / 1024).toFixed(1)} KB</div>
+          </div>
+        </div>
+        <button id="extractBtn" class="btn btn-primary btn-full" style="margin-top:16px" ${state.loading ? "disabled" : ""}>
+          ${state.loading ? '<span class="spinner"></span> Extracting...' : "Extract Fields"}
+        </button>
+      ` : ""}
+    </div>` : "";
+
+  const fieldsHtml = state.extractedFields && !state.created ? `
+    <div class="card fade-in" style="margin-bottom:20px">
+      <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">Extracted Fields</h2>
+      <div class="fields-grid">
+        ${renderField("applicant_name", "Name")}
+        ${renderField("email", "Email")}
+        ${renderField("phone", "Phone")}
+        ${renderField("linkedin", "LinkedIn")}
+        ${renderField("location", "Location")}
+        ${renderField("salary_expectations", "Salary (hourly)")}
+        ${renderField("source", "Source")}
+        ${renderField("summary", "Summary")}
+      </div>
+      <div class="auto-fields">
+        <div class="label">Auto-filled defaults</div>
+        <span class="tag">Status: Recruiter Screen</span>
+        <span class="tag">Score: Mixed</span>
+        <span class="tag">Recruiter: Ana Arcos</span>
+        <span class="tag">Rejection email: No</span>
+        <span class="tag">Contact date: Today</span>
+      </div>
+      <button id="createBtn" class="btn btn-success btn-full" style="margin-top:20px" ${state.loading ? "disabled" : ""}>
+        ${state.loading ? '<span class="spinner"></span> Creating...' : "Create Notion Page"}
+      </button>
+    </div>` : "";
+
+  const successHtml = state.created ? `
+    <div class="card success-card fade-in">
+      <div class="success-icon">&#10003;</div>
+      <h2>Candidate Page Created</h2>
+      <p>Successfully added to your Notion database.</p>
+      <button id="resetBtn" class="btn btn-primary">Upload Another CV</button>
+    </div>` : "";
+
+  return `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+      <div class="logo logo-sm" style="margin-bottom:0">
+        <div class="logo-icon logo-icon-sm">N</div>
+        <h1>Notion Recruiter</h1>
+      </div>
+      <button id="settingsBtn" class="btn btn-ghost" title="Connection settings">&#9881; Settings</button>
+    </div>
+    <div class="breadcrumb">${breadcrumbHtml}</div>
+    ${statusHtml}${pagesHtml}${rolesHtml}${uploadHtml}${fieldsHtml}${successHtml}`;
+}
+
+function renderField(key, label) {
+  const val = state.extractedFields?.[key] ?? "";
+  return `<div class="field-row">
+    <label class="field-label">${label}</label>
+    <input class="field-input" data-key="${key}" value="${esc(val)}" />
+  </div>`;
+}
+
+function esc(s) { return String(s || "").replace(/"/g, "&quot;").replace(/</g, "&lt;"); }
+
+// ─── Events ──────────────────────────────────────────────────────
+
+function bindEvents() {
+  const $ = id => document.getElementById(id);
+
+  // Connect screen
+  $("notionKey")?.addEventListener("input", e => state.notionKey = e.target.value);
+  $("dbId")?.addEventListener("input", e => state.dbId = e.target.value);
+  $("aiProvider")?.addEventListener("change", e => state.aiProvider = e.target.value);
+  $("aiKey")?.addEventListener("input", e => state.aiKey = e.target.value);
+  $("connectBtn")?.addEventListener("click", handleConnect);
+
+  // Role select
+  $("roleSelect")?.addEventListener("change", e => {
+    const id = e.target.value;
+    state.selectedRole = id ? state.roles.find(r => r.id === id) || null : null;
+    render();
+  });
+
+  // Page search (debounced global search via Notion API)
+  $("pageSearch")?.addEventListener("input", e => {
+    state.searchQuery = e.target.value;
+    if (searchTimer) clearTimeout(searchTimer);
+    if (state.searchQuery.length < 2) {
+      state.searchResults = null;
+      state.searching = false;
+      render();
+      const input = document.getElementById("pageSearch");
+      if (input) { input.focus(); input.selectionStart = input.selectionEnd = e.target.selectionStart; }
+    } else {
+      searchTimer = setTimeout(() => searchNotion(state.searchQuery), 400);
+    }
+  });
+
+  // Page navigation
+  document.querySelectorAll(".page-btn").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.searchQuery = "";
+      state.searchResults = null;
+      const id = btn.dataset.id, title = btn.dataset.title, type = btn.dataset.type;
+      navigateTo(id, title, type);
+    });
+  });
+
+  document.querySelectorAll(".bc-btn:not(.bc-current)").forEach(btn => {
+    btn.addEventListener("click", () => {
+      state.searchQuery = "";
+      state.searchResults = null;
+      handleBreadcrumb(parseInt(btn.dataset.idx));
+    });
+  });
+
+  // Drag & drop
+  const dropZone = $("dropZone");
+  if (dropZone) {
+    dropZone.addEventListener("dragover", e => { e.preventDefault(); dropZone.classList.add("drag-over"); });
+    dropZone.addEventListener("dragleave", () => dropZone.classList.remove("drag-over"));
+    dropZone.addEventListener("drop", e => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-over");
+      const file = e.dataTransfer.files?.[0];
+      if (file) { state.cvFile = file; render(); }
+    });
+  }
+
+  // CV file input
+  $("cvFile")?.addEventListener("change", e => {
+    state.cvFile = e.target.files?.[0] || null;
+    render();
+  });
+  $("extractBtn")?.addEventListener("click", handleExtract);
+
+  // Fields
+  document.querySelectorAll(".field-input").forEach(inp => {
+    inp.addEventListener("input", e => {
+      if (state.extractedFields) state.extractedFields[e.target.dataset.key] = e.target.value;
+    });
+  });
+
+  $("settingsBtn")?.addEventListener("click", () => {
+    state.connected = false;
+    state.pages = [];
+    state.breadcrumb = [];
+    state.extractedFields = null;
+    state.cvFile = null;
+    state.created = false;
+    state.status = "";
+    render();
+  });
+
+  $("createBtn")?.addEventListener("click", handleCreate);
+  $("resetBtn")?.addEventListener("click", () => {
+    state.extractedFields = null;
+    state.cvFile = null;
+    state.created = false;
+    state.status = "";
+    render();
+  });
+}
+
+async function handleConnect() {
+  if (!state.notionKey || !state.dbId || !state.aiKey) {
+    state.status = "Please fill in all fields.";
+    return render();
+  }
+  state.loading = true;
+  state.status = "Connecting...";
+  render();
+
+  try {
+    const dbPages = await fetchDbPages(state.dbId);
+    state.pages = dbPages;
+    state.breadcrumb = [{ id: state.dbId, title: "Database", type: "database" }];
+    state.currentPageId = state.dbId;
+    state.targetDbId = state.dbId;
+    state.roles = await fetchRolesForDb(state.dbId);
+    state.connected = true;
+    saveSettings();
+    state.status = state.roles.length
+      ? `Found ${state.roles.length} role(s). Select a role, then upload a CV.`
+      : dbPages.length ? `Found ${dbPages.length} page(s)` : "Connected. No pages yet -- upload a CV to create one.";
+  } catch {
+    try {
+      const children = await fetchChildren(state.dbId);
+      state.pages = children || [];
+      state.breadcrumb = [{ id: state.dbId, title: "Root", type: "page" }];
+      state.currentPageId = state.dbId;
+      state.connected = true;
+      saveSettings();
+      state.status = state.pages.length ? `Found ${state.pages.length} item(s)` : "Connected. No child pages found.";
+    } catch (e) {
+      state.status = "Connection failed: " + e.message;
+    }
+  }
+  state.loading = false;
+  render();
+}
+
+async function navigateTo(id, title, type) {
+  state.loading = true;
+  state.status = "Loading...";
+  state.selectedRole = null;
+  state.roles = [];
+  state.breadcrumb.push({ id, title, type });
+  render();
+
+  try {
+    let pages;
+    if (type === "child_database" || type === "database") {
+      pages = await fetchDbPages(id);
+      state.targetDbId = id;
+      state.roles = await fetchRolesForDb(id);
+    } else {
+      pages = await fetchChildren(id);
+      if (pages === null) {
+        pages = await fetchDbPages(id);
+        state.targetDbId = id;
+        state.roles = await fetchRolesForDb(id);
+      }
+    }
+    state.pages = pages;
+    state.currentPageId = id;
+    state.currentPageTitle = title;
+    if (state.roles.length) {
+      state.status = `${state.roles.length} role(s) available. Select a role, then upload a CV.`;
+    } else {
+      state.status = state.pages.length ? `${state.pages.length} item(s)` : "No subpages. You can upload a CV here.";
+    }
+  } catch (e) {
+    state.status = "Error: " + e.message;
+  }
+  state.loading = false;
+  render();
+}
+
+function handleBreadcrumb(idx) {
+  const target = state.breadcrumb[idx];
+  state.breadcrumb = state.breadcrumb.slice(0, idx);
+  state.pages = [];
+  navigateTo(target.id, target.title, target.type);
+}
+
+async function handleExtract() {
+  if (!state.cvFile) return;
+  state.loading = true;
+  state.status = "Extracting CV fields...";
+  render();
+
+  try {
+    const form = new FormData();
+    form.append("cv", state.cvFile);
+    form.append("provider", state.aiProvider);
+    form.append("aiKey", state.aiKey);
+
+    const res = await fetch("/api/extract-cv", { method: "POST", body: form });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+    state.extractedFields = data.fields;
+    state.status = "Fields extracted -- review and create the page.";
+  } catch (e) {
+    state.status = "Extraction error: " + e.message;
+  }
+  state.loading = false;
+  render();
+}
+
+async function handleCreate() {
+  state.loading = true;
+  state.status = state.selectedRole ? "Creating page and generating analysis notes..." : "Creating Notion page...";
+  render();
+
+  try {
+    const form = new FormData();
+    form.append("notionKey", state.notionKey);
+    form.append("dbId", state.targetDbId || state.dbId);
+    form.append("fields", JSON.stringify(state.extractedFields));
+    form.append("roleId", state.selectedRole?.id || "");
+    form.append("roleName", state.selectedRole?.title || "");
+    form.append("aiProvider", state.aiProvider);
+    form.append("aiKey", state.aiKey);
+    if (state.cvFile) form.append("cv", state.cvFile);
+
+    const res = await fetch("/api/create-candidate", {
+      method: "POST",
+      body: form,
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error + (data.details ? " -- " + JSON.stringify(data.details) : ""));
+    state.created = true;
+    state.status = "Page created successfully!";
+  } catch (e) {
+    state.status = "Error: " + e.message;
+  }
+  state.loading = false;
+  render();
+}
+
+// Boot
+render();
+</script>
+</body>
+</html>
