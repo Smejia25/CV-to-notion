@@ -613,6 +613,7 @@ const state = {
   targetDbId: null,        // the database we'll create entries in
   roles: [],               // "Applied for" relation options
   selectedRole: null,      // { id, title } of chosen role
+  dbSchema: null,          // fetched database schema (extractable properties)
 };
 
 let searchTimer = null;
@@ -744,26 +745,61 @@ async function fetchDbPages(dbId) {
   return [];
 }
 
-async function fetchRolesForDb(dbId) {
-  // Get database schema to find "Applied for" relation
+const EXTRACTABLE_TYPES = ["title", "email", "rich_text", "url", "select", "number", "phone_number"];
+const SKIP_TYPES = ["rollup", "formula", "created_time", "last_edited_time", "created_by", "last_edited_by", "unique_id"];
+
+async function fetchDbSchema(dbId) {
   const dbInfo = await notionFetch(`databases/${dbId}`);
-  if (dbInfo.object === "error") return [];
+  if (dbInfo.object === "error") return { schema: [], roles: [] };
 
-  const appliedFor = dbInfo.properties?.["Applied for"];
-  if (!appliedFor || appliedFor.type !== "relation") return [];
+  // Build extractable schema
+  const schema = [];
+  let rolesDbId = null;
 
-  const rolesDbId = appliedFor.relation?.database_id;
-  if (!rolesDbId) return [];
+  for (const [name, prop] of Object.entries(dbInfo.properties || {})) {
+    if (SKIP_TYPES.includes(prop.type)) continue;
 
-  // Fetch all roles from the related database
-  const data = await notionFetch(`databases/${rolesDbId}/query`, "POST", {});
-  if (!data.results) return [];
+    const entry = { name, type: prop.type, id: prop.id };
 
-  return data.results.map(p => {
-    const titleProp = Object.values(p.properties).find(v => v.type === "title");
-    const title = titleProp?.title?.[0]?.plain_text || "Untitled";
-    return { id: p.id, title };
-  });
+    if (EXTRACTABLE_TYPES.includes(prop.type)) {
+      if (prop.type === "select" && prop.select?.options) {
+        entry.options = prop.select.options.map(o => o.name);
+      }
+      schema.push(entry);
+    } else if (prop.type === "status" && prop.status?.options) {
+      entry.options = prop.status.options.map(o => o.name);
+      entry.defaultValue = prop.status.options[0]?.name || null;
+      schema.push(entry);
+    } else if (prop.type === "date") {
+      schema.push(entry);
+    } else if (prop.type === "checkbox") {
+      schema.push(entry);
+    } else if (prop.type === "relation") {
+      entry.relationDbId = prop.relation?.database_id;
+      schema.push(entry);
+      if (name === "Applied for" && entry.relationDbId) {
+        rolesDbId = entry.relationDbId;
+      }
+    } else if (prop.type === "files") {
+      schema.push(entry);
+    }
+    // skip: people, relation (non-Applied for handled above)
+  }
+
+  // Fetch roles if there's an "Applied for" relation
+  let roles = [];
+  if (rolesDbId) {
+    const data = await notionFetch(`databases/${rolesDbId}/query`, "POST", {});
+    if (data.results) {
+      roles = data.results.map(p => {
+        const titleProp = Object.values(p.properties).find(v => v.type === "title");
+        const title = titleProp?.title?.[0]?.plain_text || "Untitled";
+        return { id: p.id, title };
+      });
+    }
+  }
+
+  return { schema, roles };
 }
 
 // ─── Render ──────────────────────────────────────────────────────
@@ -899,31 +935,37 @@ function renderMain() {
       ` : ""}
     </div>` : "";
 
-  const fieldsHtml = state.extractedFields && !state.created ? `
+  const fieldsHtml = state.extractedFields && !state.created ? (() => {
+    const schema = state.dbSchema || [];
+    const extractable = schema.filter(s => EXTRACTABLE_TYPES.includes(s.type));
+    const autoFields = schema.filter(s => !EXTRACTABLE_TYPES.includes(s.type) && s.type !== "files" && s.type !== "relation");
+
+    return `
     <div class="card fade-in" style="margin-bottom:20px">
       <h2 style="font-size:16px;font-weight:600;margin-bottom:16px">Extracted Fields</h2>
       <div class="fields-grid">
-        ${renderField("applicant_name", "Name")}
-        ${renderField("email", "Email")}
-        ${renderField("phone", "Phone")}
-        ${renderField("linkedin", "LinkedIn")}
-        ${renderField("location", "Location")}
-        ${renderField("salary_expectations", "Salary (hourly)")}
-        ${renderField("source", "Source")}
-        ${renderField("summary", "Summary")}
+        ${extractable.map(s => {
+          if (s.type === "select" && s.options?.length) {
+            return renderSelectField(s.name, s.name, s.options);
+          }
+          return renderField(s.name, s.name);
+        }).join("")}
       </div>
+      ${autoFields.length ? `
       <div class="auto-fields">
         <div class="label">Auto-filled defaults</div>
-        <span class="tag">Status: Recruiter Screen</span>
-        <span class="tag">Score: Mixed</span>
-        <span class="tag">Recruiter: Ana Arcos</span>
-        <span class="tag">Rejection email: No</span>
-        <span class="tag">Contact date: Today</span>
-      </div>
+        ${autoFields.map(s => {
+          if (s.type === "status") return `<span class="tag">${esc(s.name)}: ${esc(state.extractedFields[s.name] || s.defaultValue || "default")}</span>`;
+          if (s.type === "date") return `<span class="tag">${esc(s.name)}: Today</span>`;
+          if (s.type === "checkbox") return `<span class="tag">${esc(s.name)}: No</span>`;
+          return "";
+        }).join("")}
+      </div>` : ""}
       <button id="createBtn" class="btn btn-success btn-full" style="margin-top:20px" ${state.loading ? "disabled" : ""}>
         ${state.loading ? '<span class="spinner"></span> Creating...' : "Create Notion Page"}
       </button>
-    </div>` : "";
+    </div>`;
+  })() : "";
 
   const successHtml = state.created ? `
     <div class="card success-card fade-in">
@@ -948,8 +990,23 @@ function renderMain() {
 function renderField(key, label) {
   const val = state.extractedFields?.[key] ?? "";
   return `<div class="field-row">
-    <label class="field-label">${label}</label>
-    <input class="field-input" data-key="${key}" value="${esc(val)}" />
+    <label class="field-label">${esc(label)}</label>
+    <input class="field-input" data-key="${esc(key)}" value="${esc(val)}" />
+  </div>`;
+}
+
+function renderSelectField(key, label, options) {
+  const val = state.extractedFields?.[key] ?? "";
+  const matchedOption = options.find(o => o.toLowerCase() === val.toLowerCase());
+  return `<div class="field-row">
+    <label class="field-label">${esc(label)}</label>
+    <div style="flex:1;display:flex;gap:8px">
+      <select class="field-input field-select" data-key="${esc(key)}" style="flex:1">
+        <option value="">-- Select --</option>
+        ${options.map(o => `<option value="${esc(o)}" ${(matchedOption === o || val === o) ? "selected" : ""}>${esc(o)}</option>`).join("")}
+      </select>
+      <input class="field-input" data-key="${esc(key)}" value="${esc(val)}" placeholder="or type custom" style="flex:1" />
+    </div>
   </div>`;
 }
 
@@ -1027,10 +1084,20 @@ function bindEvents() {
   });
   $("extractBtn")?.addEventListener("click", handleExtract);
 
-  // Fields
-  document.querySelectorAll(".field-input").forEach(inp => {
+  // Fields - inputs and selects
+  document.querySelectorAll(".field-input:not(.field-select)").forEach(inp => {
     inp.addEventListener("input", e => {
       if (state.extractedFields) state.extractedFields[e.target.dataset.key] = e.target.value;
+    });
+  });
+  document.querySelectorAll(".field-select").forEach(sel => {
+    sel.addEventListener("change", e => {
+      if (state.extractedFields && e.target.value) {
+        state.extractedFields[e.target.dataset.key] = e.target.value;
+        // Update the text input next to it
+        const textInput = sel.parentElement.querySelector("input.field-input");
+        if (textInput) textInput.value = e.target.value;
+      }
     });
   });
 
@@ -1070,7 +1137,9 @@ async function handleConnect() {
     state.breadcrumb = [{ id: state.dbId, title: "Database", type: "database" }];
     state.currentPageId = state.dbId;
     state.targetDbId = state.dbId;
-    state.roles = await fetchRolesForDb(state.dbId);
+    const { schema, roles } = await fetchDbSchema(state.dbId);
+    state.dbSchema = schema;
+    state.roles = roles;
     state.connected = true;
     saveSettings();
     state.status = state.roles.length
@@ -1106,13 +1175,17 @@ async function navigateTo(id, title, type) {
     if (type === "child_database" || type === "database") {
       pages = await fetchDbPages(id);
       state.targetDbId = id;
-      state.roles = await fetchRolesForDb(id);
+      const { schema, roles } = await fetchDbSchema(id);
+      state.dbSchema = schema;
+      state.roles = roles;
     } else {
       pages = await fetchChildren(id);
       if (pages === null) {
         pages = await fetchDbPages(id);
         state.targetDbId = id;
-        state.roles = await fetchRolesForDb(id);
+        const { schema, roles } = await fetchDbSchema(id);
+        state.dbSchema = schema;
+        state.roles = roles;
       }
     }
     state.pages = pages;
@@ -1148,6 +1221,7 @@ async function handleExtract() {
     form.append("cv", state.cvFile);
     form.append("provider", state.aiProvider);
     form.append("aiKey", state.aiKey);
+    if (state.dbSchema) form.append("schema", JSON.stringify(state.dbSchema));
 
     const res = await fetch("/api/extract-cv", { method: "POST", body: form });
     const data = await res.json();
@@ -1176,6 +1250,7 @@ async function handleCreate() {
     form.append("roleName", state.selectedRole?.title || "");
     form.append("aiProvider", state.aiProvider);
     form.append("aiKey", state.aiKey);
+    if (state.dbSchema) form.append("schema", JSON.stringify(state.dbSchema));
     if (state.cvFile) form.append("cv", state.cvFile);
 
     const res = await fetch("/api/create-candidate", {

@@ -45,26 +45,61 @@ app.all("/api/notion/*", async (req, res) => {
 
 // ─── CV Extraction ───────────────────────────────────────────────
 
-const EXTRACTION_PROMPT = `Extract the following fields from this CV/resume. Return ONLY a valid JSON object with these keys (use null for any field not found):
+function buildExtractionPrompt(schema) {
+  if (!schema || !schema.length) {
+    // Fallback if no schema provided
+    return `Extract the following fields from this CV/resume. Return ONLY a valid JSON object with these keys (use null for any field not found):
 {
-  "applicant_name": "Full name",
-  "email": "Email address",
-  "phone": "Phone number with or without country code may be after Phone: in the text",
-  "linkedin": "LinkedIn profile URL",
-  "location": "City Province/State (NO commas, e.g. 'Montréal QC', 'Toronto ON', 'Medellín Colombia')",
-  "salary_expectations": "Salary expectation (NO commas, e.g. '55K', '$42K', '25/hour'), or null",
-  "source": "One of: Indeed Applicant, Sourced - Indeed, LinkedIn applicant, Sourced - LinkedIn, Sourced - Google, Sourced - Github, Referral. Default to 'LinkedIn applicant' if not clear. NO commas.",
-  "summary": "Brief 1-2 sentence summary of the candidate"
+  "Name": "Full name",
+  "Email": "Email address",
+  "Phone Number": "Phone number",
+  "LinkedIn Profile": "LinkedIn profile URL",
+  "Location": "City Province/State (NO commas)",
+  "Source": "Default to 'LinkedIn applicant'",
+  "Salary Expct.": "Salary expectation or null"
 }
 No markdown, no backticks, no explanation. Just the JSON object.`;
+  }
 
-async function extractWithAnthropic(apiKey, base64, mediaType) {
+  const extractableTypes = ["title", "email", "rich_text", "url", "select", "number", "phone_number"];
+  const fields = schema.filter(s => extractableTypes.includes(s.type));
+
+  const fieldDescriptions = fields.map(f => {
+    let hint = "";
+    switch (f.type) {
+      case "title": hint = "text value"; break;
+      case "email": hint = "email address"; break;
+      case "rich_text": hint = "text value"; break;
+      case "url": hint = "URL"; break;
+      case "number": hint = "number"; break;
+      case "phone_number": hint = "phone number"; break;
+      case "select":
+        if (f.options?.length) {
+          hint = `one of: ${f.options.slice(0, 15).join(", ")}. Pick the closest match or use a short value`;
+        } else {
+          hint = "short text value";
+        }
+        break;
+    }
+    return `  "${f.name}": "${hint} (or null if not found)"`;
+  }).join(",\n");
+
+  return `Extract the following fields from this CV/resume. Return ONLY a valid JSON object with these keys (use null for any field not found).
+IMPORTANT: For select fields, NO commas allowed in values. Use spaces instead (e.g. 'Montréal QC' not 'Montréal, QC').
+
+{
+${fieldDescriptions}
+}
+No markdown, no backticks, no explanation. Just the JSON object.`;
+}
+
+async function extractWithAnthropic(apiKey, base64, mediaType, prompt) {
   const isPdf = mediaType.includes("pdf");
   const content = [
     isPdf
       ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: base64 } }
       : { type: "image", source: { type: "base64", media_type: mediaType, data: base64 } },
-    { type: "text", text: EXTRACTION_PROMPT },
+    { type: "text", text: prompt },
   ];
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -87,7 +122,7 @@ async function extractWithAnthropic(apiKey, base64, mediaType) {
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
-async function extractWithOpenAI(apiKey, base64, mediaType) {
+async function extractWithOpenAI(apiKey, base64, mediaType, prompt) {
   const isPdf = mediaType.includes("pdf");
 
   const contentParts = [];
@@ -103,7 +138,7 @@ async function extractWithOpenAI(apiKey, base64, mediaType) {
       image_url: `data:${mediaType};base64,${base64}`,
     });
   }
-  contentParts.push({ type: "input_text", text: EXTRACTION_PROMPT });
+  contentParts.push({ type: "input_text", text: prompt });
 
   const res = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
@@ -125,7 +160,7 @@ async function extractWithOpenAI(apiKey, base64, mediaType) {
   return JSON.parse(text.replace(/```json|```/g, "").trim());
 }
 
-async function extractWithGemini(apiKey, base64, mediaType) {
+async function extractWithGemini(apiKey, base64, mediaType, prompt) {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
   const res = await fetch(url, {
@@ -135,7 +170,7 @@ async function extractWithGemini(apiKey, base64, mediaType) {
       contents: [{
         parts: [
           { inline_data: { mime_type: mediaType, data: base64 } },
-          { text: EXTRACTION_PROMPT },
+          { text: prompt },
         ],
       }],
     }),
@@ -150,22 +185,24 @@ async function extractWithGemini(apiKey, base64, mediaType) {
 app.post("/api/extract-cv", upload.single("cv"), async (req, res) => {
   try {
     const { provider, aiKey } = req.body;
+    const schema = req.body.schema ? JSON.parse(req.body.schema) : null;
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
     if (!aiKey) return res.status(400).json({ error: "Missing AI API key" });
 
     const base64 = req.file.buffer.toString("base64");
     const mediaType = req.file.mimetype;
+    const prompt = buildExtractionPrompt(schema);
 
     let fields;
     switch (provider) {
       case "anthropic":
-        fields = await extractWithAnthropic(aiKey, base64, mediaType);
+        fields = await extractWithAnthropic(aiKey, base64, mediaType, prompt);
         break;
       case "openai":
-        fields = await extractWithOpenAI(aiKey, base64, mediaType);
+        fields = await extractWithOpenAI(aiKey, base64, mediaType, prompt);
         break;
       case "gemini":
-        fields = await extractWithGemini(aiKey, base64, mediaType);
+        fields = await extractWithGemini(aiKey, base64, mediaType, prompt);
         break;
       default:
         return res.status(400).json({ error: "Invalid provider" });
@@ -379,66 +416,21 @@ app.use("/uploads", express.static(UPLOADS_DIR));
 app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
   const { notionKey, dbId, roleId, roleName, aiProvider, aiKey } = req.body;
   const fields = JSON.parse(req.body.fields || "{}");
+  const schema = req.body.schema ? JSON.parse(req.body.schema) : null;
   if (!notionKey || !dbId || !fields) {
     return res.status(400).json({ error: "Missing required fields" });
   }
 
-  const properties = {
-    Name: { title: [{ text: { content: fields.applicant_name || "Unknown" } }] },
-  };
+  // Build properties dynamically from schema
+  const properties = {};
 
-  // Email (email type)
-  if (fields.email) {
-    properties["Email"] = { email: fields.email };
-  }
-
-  // Phone Number (rich_text)
-  if (fields.phone) {
-    properties["Phone Number"] = { rich_text: [{ text: { content: fields.phone } }] };
-  }
-
-  // LinkedIn Profile (url type)
-  if (fields.linkedin) {
-    properties["LinkedIn Profile"] = { url: fields.linkedin };
-  }
-
-  // Location (select type - commas not allowed in Notion selects)
-  if (fields.location) {
-    properties["Location"] = { select: { name: fields.location.replace(/,/g, "") } };
-  }
-
-  // Source (select type)
-  if (fields.source) {
-    properties["Source"] = { select: { name: fields.source.replace(/,/g, "") } };
-  }
-
-  // Applicant Status (status type)
-  properties["Applicant Status"] = { status: { name: fields.applicant_status || "Interested - to schedule" } };
-
-  // Candidate Score (select)
-  properties["Candidate Score"] = { select: { name: "➖ Mixed" } };
-
-  // Rejection email sent (checkbox)
-  properties["Rejection email sent"] = { checkbox: false };
-
-  // Date of contact (date)
-  properties["Date of contact"] = { date: { start: new Date().toISOString().split("T")[0] } };
-
-  // Salary Expct. (select type)
-  if (fields.salary_expectations) {
-    properties["Salary Expct."] = { select: { name: fields.salary_expectations.replace(/,/g, "") } };
-  }
-
-  // Applied for (relation)
-  if (roleId) {
-    properties["Applied for"] = { relation: [{ id: roleId }] };
-  }
-
-  // Save CV file and build renamed filename
+  // Save CV file first so we can reference it
   let cvFileUrl = null;
   let cvFileName = null;
   if (req.file) {
-    const name = fields.applicant_name || "Unknown";
+    // Find the title field to get the name
+    const titleField = schema?.find(s => s.type === "title");
+    const name = (titleField ? fields[titleField.name] : null) || fields.Name || fields.applicant_name || "Unknown";
     const parts = name.trim().split(/\s+/);
     const lastName = parts.length > 1 ? parts[parts.length - 1] : parts[0];
     const firstName = parts.length > 1 ? parts.slice(0, -1).join(" ") : "";
@@ -454,11 +446,64 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
     cvFileUrl = `${protocol}://${host}/uploads/${diskName}`;
   }
 
-  // Attach CV to properties if we have a hosted URL
-  if (cvFileUrl) {
-    properties["CV"] = {
-      files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }],
-    };
+  if (schema) {
+    for (const prop of schema) {
+      const val = fields[prop.name];
+
+      switch (prop.type) {
+        case "title":
+          properties[prop.name] = { title: [{ text: { content: val || "Unknown" } }] };
+          break;
+        case "email":
+          if (val) properties[prop.name] = { email: val };
+          break;
+        case "rich_text":
+          if (val) properties[prop.name] = { rich_text: [{ text: { content: val } }] };
+          break;
+        case "url":
+          if (val) properties[prop.name] = { url: val };
+          break;
+        case "number":
+          if (val) properties[prop.name] = { number: parseFloat(val) || null };
+          break;
+        case "select":
+          if (val) properties[prop.name] = { select: { name: String(val).replace(/,/g, "") } };
+          break;
+        case "status":
+          properties[prop.name] = { status: { name: val || prop.defaultValue || "Applied" } };
+          break;
+        case "date":
+          properties[prop.name] = { date: { start: val || new Date().toISOString().split("T")[0] } };
+          break;
+        case "checkbox":
+          properties[prop.name] = { checkbox: val === true || val === "true" || false };
+          break;
+        case "relation":
+          if (prop.name === "Applied for" && roleId) {
+            properties[prop.name] = { relation: [{ id: roleId }] };
+          }
+          break;
+        case "files":
+          if (cvFileUrl && (prop.name === "CV" || prop.name.toLowerCase().includes("cv") || prop.name.toLowerCase().includes("resume"))) {
+            properties[prop.name] = {
+              files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }],
+            };
+          }
+          break;
+      }
+    }
+  } else {
+    // Fallback: hardcoded properties if no schema
+    properties["Name"] = { title: [{ text: { content: fields.Name || fields.applicant_name || "Unknown" } }] };
+    if (fields.Email || fields.email) properties["Email"] = { email: fields.Email || fields.email };
+    if (fields["Phone Number"] || fields.phone) properties["Phone Number"] = { rich_text: [{ text: { content: fields["Phone Number"] || fields.phone } }] };
+    if (fields["LinkedIn Profile"] || fields.linkedin) properties["LinkedIn Profile"] = { url: fields["LinkedIn Profile"] || fields.linkedin };
+    if (fields.Location || fields.location) properties["Location"] = { select: { name: (fields.Location || fields.location).replace(/,/g, "") } };
+    if (fields.Source || fields.source) properties["Source"] = { select: { name: (fields.Source || fields.source).replace(/,/g, "") } };
+    properties["Applicant Status"] = { status: { name: "Interested - to schedule" } };
+    properties["Date of contact"] = { date: { start: new Date().toISOString().split("T")[0] } };
+    if (roleId) properties["Applied for"] = { relation: [{ id: roleId }] };
+    if (cvFileUrl) properties["CV"] = { files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }] };
   }
 
   try {
