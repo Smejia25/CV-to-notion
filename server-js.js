@@ -3,6 +3,7 @@ import multer from "multer";
 import fetch from "node-fetch";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
+import FormData from "form-data";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -403,13 +404,42 @@ function textToNotionBlocks(text) {
   return blocks;
 }
 
-// ─── File hosting for CV uploads ─────────────────────────────────
-import { randomUUID } from "crypto";
-import { mkdirSync, writeFileSync } from "fs";
+// ─── Upload CV to Notion ─────────────────────────────────────────
 
-const UPLOADS_DIR = join(__dirname, "uploads");
-mkdirSync(UPLOADS_DIR, { recursive: true });
-app.use("/uploads", express.static(UPLOADS_DIR));
+async function uploadFileToNotion(notionKey, buffer, filename, contentType) {
+  const FILE_API_VERSION = "2022-06-28";
+
+  // Step 1: Create a file upload object
+  const createRes = await fetch("https://api.notion.com/v1/file_uploads", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${notionKey}`,
+      "Notion-Version": FILE_API_VERSION,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ filename, content_type: contentType }),
+  });
+  const createData = await createRes.json();
+  if (createData.object === "error") throw new Error(createData.message);
+
+  // Step 2: Send the actual file
+  const form = new FormData();
+  form.append("file", buffer, { filename, contentType });
+
+  const sendRes = await fetch(`https://api.notion.com/v1/file_uploads/${createData.id}/send`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${notionKey}`,
+      "Notion-Version": FILE_API_VERSION,
+      ...form.getHeaders(),
+    },
+    body: form,
+  });
+  const sendData = await sendRes.json();
+  if (sendData.object === "error") throw new Error(sendData.message);
+
+  return sendData.id; // file_upload ID to reference in properties
+}
 
 // ─── Create Notion Page ──────────────────────────────────────────
 
@@ -424,11 +454,10 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
   // Build properties dynamically from schema
   const properties = {};
 
-  // Save CV file first so we can reference it
-  let cvFileUrl = null;
+  // Upload CV to Notion first so we can reference it
+  let cvFileUploadId = null;
   let cvFileName = null;
   if (req.file) {
-    // Find the title field to get the name
     const titleField = schema?.find(s => s.type === "title");
     const name = (titleField ? fields[titleField.name] : null) || fields.Name || fields.applicant_name || "Unknown";
     const parts = name.trim().split(/\s+/);
@@ -437,13 +466,11 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
     const ext = req.file.originalname.split(".").pop() || "pdf";
     cvFileName = `${lastName} ${firstName}${roleName ? " - " + roleName : ""}.${ext}`.trim();
 
-    const fileId = randomUUID();
-    const diskName = `${fileId}.${ext}`;
-    writeFileSync(join(UPLOADS_DIR, diskName), req.file.buffer);
-
-    const host = req.headers.host || `localhost:${PORT}`;
-    const protocol = req.headers["x-forwarded-proto"] || "http";
-    cvFileUrl = `${protocol}://${host}/uploads/${diskName}`;
+    try {
+      cvFileUploadId = await uploadFileToNotion(notionKey, req.file.buffer, cvFileName, req.file.mimetype);
+    } catch (uploadErr) {
+      console.error("Notion file upload failed:", uploadErr.message);
+    }
   }
 
   if (schema) {
@@ -473,7 +500,7 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
           properties[prop.name] = { status: { name: val || prop.defaultValue || "Applied" } };
           break;
         case "date":
-          properties[prop.name] = { date: { start: val || new Date().toISOString().split("T")[0] } };
+          // Never auto-fill date fields
           break;
         case "checkbox":
           properties[prop.name] = { checkbox: val === true || val === "true" || false };
@@ -484,9 +511,9 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
           }
           break;
         case "files":
-          if (cvFileUrl && (prop.name === "CV" || prop.name.toLowerCase().includes("cv") || prop.name.toLowerCase().includes("resume"))) {
+          if (cvFileUploadId && (prop.name === "CV" || prop.name.toLowerCase().includes("cv") || prop.name.toLowerCase().includes("resume"))) {
             properties[prop.name] = {
-              files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }],
+              files: [{ type: "file_upload", file_upload: { id: cvFileUploadId }, name: cvFileName }],
             };
           }
           break;
@@ -501,9 +528,9 @@ app.post("/api/create-candidate", upload.single("cv"), async (req, res) => {
     if (fields.Location || fields.location) properties["Location"] = { select: { name: (fields.Location || fields.location).replace(/,/g, "") } };
     if (fields.Source || fields.source) properties["Source"] = { select: { name: (fields.Source || fields.source).replace(/,/g, "") } };
     properties["Applicant Status"] = { status: { name: "Interested - to schedule" } };
-    properties["Date of contact"] = { date: { start: new Date().toISOString().split("T")[0] } };
+    // Don't auto-fill dates
     if (roleId) properties["Applied for"] = { relation: [{ id: roleId }] };
-    if (cvFileUrl) properties["CV"] = { files: [{ type: "external", name: cvFileName, external: { url: cvFileUrl } }] };
+    if (cvFileUploadId) properties["CV"] = { files: [{ type: "file_upload", file_upload: { id: cvFileUploadId }, name: cvFileName }] };
   }
 
   try {
