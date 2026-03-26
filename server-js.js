@@ -70,7 +70,10 @@ No markdown, no backticks, no explanation. Just the JSON object.`;
     switch (f.type) {
       case "title": hint = "text value"; break;
       case "email": hint = "email address"; break;
-      case "rich_text": hint = "text value"; break;
+      case "rich_text":
+        if (f.name.toLowerCase().includes("phone")) hint = "phone number with country code";
+        else hint = "text value";
+        break;
       case "url": hint = "URL"; break;
       case "number": hint = "number"; break;
       case "phone_number": hint = "phone number"; break;
@@ -407,7 +410,7 @@ function textToNotionBlocks(text) {
 // ─── Upload CV to Notion ─────────────────────────────────────────
 
 async function uploadFileToNotion(notionKey, buffer, filename, contentType) {
-  const FILE_API_VERSION = "2022-06-28";
+  const FILE_API_VERSION = "2022-06-28"; // File upload API works with this version; bump to "2026-03-11" if errors occur
 
   // Step 1: Create a file upload object
   const createRes = await fetch("https://api.notion.com/v1/file_uploads", {
